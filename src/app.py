@@ -12,12 +12,12 @@ from iterable_text_io import IterableTextIO
 from utils import calc_profits_fifo
 
 RECORD_FUND_TRANSFER = re.compile(r"(Electronic Fund Transfer)|(Disbursement .*)")
+RECORD_DIVIDEND = re.compile(r"Cash Dividend|Payment in Lieu of Dividend")
 RECORD_INTEREST = re.compile(r"Credit|Debit Interest")
-RECORD_DIVIDEND = re.compile(r"Cash Dividend|Payment in Lieu of Dividend ")
 RECORD_OPTION = re.compile(r"(Buy|Sell) (-?[0-9]+) (.{1,5} [0-9]{2}(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[0-9]{2} [0-9]+(\.[0-9]+)? ([PC])) (\(\w+\))?")
 RECORD_SHARES = re.compile(r"(Buy|Sell) (-?[0-9]+) (.*?)\s*(\(\w+\))?$")
 RECORD_FOREX = re.compile(r"Forex Trade")
-RECORD_MARKET_DATA_SUBSCRIPTION = re.compile(r"[Mm]\*{6}66:")
+RECORD_MARKET_DATA_SUBSCRIPTION = re.compile(r"[a-zA-Z]{1}\*{6}\d{2}:")
 
 class Category(Enum):
     BALANCE = auto()
