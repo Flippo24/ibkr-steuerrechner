@@ -78,7 +78,6 @@ def parse_option_share_record(record: pd.Series) -> dict:
 
 class DividendType(Enum):
     ORDINARY = auto()
-    TAX = auto()
     OTHER = auto()
 
 def parse_dividend_record(record: pd.Series) -> str:
@@ -409,11 +408,11 @@ def display_market_data_subscriptions(df_year: pd.DataFrame):
     st.write("""Gebühren von Marktdatenabonnements werden aufsummiert. Privatleute können diese Gebühren i.d.R. nicht 
     absetzen.""")
     df_mds = df_year.query(f"Category == '{Category.MARKET_DATA_SUBSCRIPTION.name}'")
-    mds_income = df_mds["Credit"].sum()
+    mds_refunds = df_mds["Credit"].sum()
     mds_expense = abs(df_mds["Debit"].sum())
-    st.write(f"Einnahmen: {format_currency(mds_income)}")
     st.write(f"Ausgaben: {format_currency(mds_expense)}")
-    st.write(f"Summe: {format_currency(mds_income - mds_expense)}")
+    st.write(f"Erstattungen: {format_currency(mds_refunds)}")
+    st.write(f"Summe: {format_currency(mds_expense - mds_refunds)}")
     with st.expander("Kapitalflussrechnung (nur Marktdatenabonnements)"):
         display_dataframe(df_mds.filter(["Report Date", "Activity Date", "Description", "Total"]),
                           ["Report Date", "Activity Date"], ["Total"])
