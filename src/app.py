@@ -506,6 +506,7 @@ def main():
         | {Category.TRANSFER.name} | Ein- und Auszahlungen |
         | {Category.INTEREST.name} | Zinsen |
         | {Category.DIVIDEND.name} | Dividenden |
+        | {Category.TAX.name} | Quellensteuer |
         | {Category.SHARES.name} | Aktien |
         | {Category.OPTION.name} | Optionen |
         | {Category.FOREX.name} | Währungsumrechnungen |
