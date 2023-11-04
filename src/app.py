@@ -18,6 +18,7 @@ RECORD_OPTION = re.compile(r"(Buy|Sell) (-?[0-9]+) (.{1,5} [0-9]{2}(JAN|FEB|MAR|
 RECORD_SHARES = re.compile(r"(Buy|Sell) (-?[0-9,]+) (.*?)\s*(\(\w+\))?$")
 RECORD_FOREX = re.compile(r"Forex Trade")
 RECORD_MARKET_DATA_SUBSCRIPTION = re.compile(r"[a-zA-Z]{1}\*{6}\d{2}:")
+RECORD_TAX = re.compile(r"((Dividend)(.*?)(Tax))|(Withholding @)")
 
 class Category(Enum):
     BALANCE = auto()
@@ -28,6 +29,7 @@ class Category(Enum):
     SHARES = auto()
     FOREX = auto()
     MARKET_DATA_SUBSCRIPTION = auto()
+    TAX = auto()
     OTHER = auto()
 
 def categorize_statement_record(record: pd.Series) -> str:
@@ -36,6 +38,8 @@ def categorize_statement_record(record: pd.Series) -> str:
         return Category.BALANCE.name
     if RECORD_FUND_TRANSFER.fullmatch(description):
         return Category.TRANSFER.name
+    if RECORD_TAX.search(description):
+        return Category.TAX.name
     if RECORD_DIVIDEND.search(description):
         return Category.DIVIDEND.name
     if RECORD_INTEREST.search(description):
@@ -69,7 +73,6 @@ def parse_option_share_record(record: pd.Series) -> dict:
 
     match = RECORD_SHARES.match(description)
     if match is not None:
-        print(match.group(2).replace(",", ""))
         return asdict(FinancialAction(match.group(1), int(match.group(2).replace(",", "")), match.group(3)))
 
 
@@ -84,8 +87,6 @@ def parse_dividend_record(record: pd.Series) -> str:
         return DividendType.OTHER.name
     if description.endswith(" (Ordinary Dividend)"):
         return DividendType.ORDINARY.name
-    if description.endswith(" Tax"):
-        return DividendType.TAX.name
 
     return DividendType.OTHER.name
 
@@ -215,10 +216,10 @@ def display_dividends(df_year: pd.DataFrame, df_year_corrections: pd.DataFrame, 
     earned_dividends = ordinary_dividends["Total"].sum()
     earned_dividends_corrections = ordinary_dividends_corrections["Total"].sum()
 
-    taxes = df_dividend.query(f"DividendType == '{DividendType.TAX.name}'")
-    taxes_corrections = df_dividend_corrections.query(f"DividendType == '{DividendType.TAX.name}'")
-    withheld_taxes = taxes["Total"].sum()
-    withheld_taxes_corrections = taxes_corrections["Total"].sum()
+    ordinaries = df_dividend.query(f"DividendType == '{DividendType.ORDINARY.name}'")
+    ordinaries_corrections = df_dividend_corrections.query(f"DividendType == '{DividendType.ORDINARY.name}'")
+    withheld_ordinaries = ordinaries["Total"].sum()
+    withheld_ordinaries_corrections = ordinaries_corrections["Total"].sum()
 
     others = df_dividend.query(f"DividendType == '{DividendType.OTHER.name}'")
     others_corrections = df_dividend_corrections.query(f"DividendType == '{DividendType.OTHER.name}'")
@@ -230,12 +231,6 @@ def display_dividends(df_year: pd.DataFrame, df_year_corrections: pd.DataFrame, 
         st.write(f"Summe {selected_year}: {format_currency(earned_dividends)}")
         st.write(f"Korrektur: {format_currency(earned_dividends_corrections)}")
     st.write(f"Summe: {format_currency(earned_dividends + earned_dividends_corrections)}")
-
-    st.subheader("Quellensteuer")
-    if withheld_taxes_corrections:
-        st.write(f"Summe {selected_year}: {format_currency(withheld_taxes * (-1))}")
-        st.write(f"Korrektur: {format_currency(withheld_taxes_corrections * (-1))}")
-    st.write(f"Summe: {format_currency((withheld_taxes + withheld_taxes_corrections) * (-1))}")
 
     if other_dividends or other_dividends_corrections:
         st.subheader("Andere Zahlungen")
@@ -262,6 +257,18 @@ def display_interests(df_year: pd.DataFrame):
         display_dataframe(df_interests.filter(["Report Date", "Activity Date", "Description", "Total"]),
                           ["Report Date", "Activity Date"], ["Total"])
 
+def display_taxes(df_year: pd.DataFrame):
+    st.header("Quellensteuer")
+    st.write("Alle gezahlten und erstatteten Quellensteuer werden aufsummiert.")
+    df_taxes = df_year.query(f"Category == '{Category.TAX.name}'")
+    earned_taxes = df_taxes["Credit"].sum()
+    payed_taxes = abs(df_taxes["Debit"].sum())
+    st.write(f"Einnahmen: {format_currency(earned_taxes)}")
+    st.write(f"Ausgaben: {format_currency(payed_taxes)}")
+    st.write(f"Summe: {format_currency(payed_taxes - earned_taxes)}")
+    with st.expander("Kapitalflussrechnung (nur Quellensteuer)"):
+        display_dataframe(df_taxes.filter(["Report Date", "Activity Date", "Description", "Total"]),
+                          ["Report Date", "Activity Date"], ["Total"])
 
 def _add_profits(df_group, trade_counter: dict):
     df_profit = calc_profits_fifo(df_group.filter(["Count", "Credit", "Debit"]),
@@ -513,6 +520,7 @@ def main():
     display_fund_transfer(df_year)
     display_dividends(df_year, df_year_corrections, selected_year)
     display_interests(df_year)
+    display_taxes(df_year)
     display_shares(df, selected_year)
     display_options(df, selected_year)
     display_forex(df_year)
