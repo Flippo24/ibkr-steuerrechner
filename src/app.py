@@ -216,11 +216,6 @@ def display_dividends(df_year: pd.DataFrame, df_year_corrections: pd.DataFrame, 
     earned_dividends = ordinary_dividends["Total"].sum()
     earned_dividends_corrections = ordinary_dividends_corrections["Total"].sum()
 
-    ordinaries = df_dividend.query(f"DividendType == '{DividendType.ORDINARY.name}'")
-    ordinaries_corrections = df_dividend_corrections.query(f"DividendType == '{DividendType.ORDINARY.name}'")
-    withheld_ordinaries = ordinaries["Total"].sum()
-    withheld_ordinaries_corrections = ordinaries_corrections["Total"].sum()
-
     others = df_dividend.query(f"DividendType == '{DividendType.OTHER.name}'")
     others_corrections = df_dividend_corrections.query(f"DividendType == '{DividendType.OTHER.name}'")
     other_dividends = others["Total"].sum()
@@ -238,7 +233,7 @@ def display_dividends(df_year: pd.DataFrame, df_year_corrections: pd.DataFrame, 
         st.write(f"Korrektur: {format_currency(other_dividends_corrections)}")
         st.write(f"Summe: {format_currency(other_dividends + other_dividends_corrections)}")
 
-    with st.expander("Kapitalflussrechnung (nur Dividenden)"):
+    with st.expander("Kapitalflussrechnung (nur Gewöhnliche Dividenden)"):
         display_dataframe((pd.concat([df_dividend, df_dividend_corrections])
                            .filter(["Report Date", "Activity Date", "Description", "Total"])),
                           ["Report Date", "Activity Date"], ["Total"])
@@ -263,8 +258,8 @@ def display_taxes(df_year: pd.DataFrame):
     df_taxes = df_year.query(f"Category == '{Category.TAX.name}'")
     earned_taxes = df_taxes["Credit"].sum()
     payed_taxes = abs(df_taxes["Debit"].sum())
-    st.write(f"Einnahmen: {format_currency(earned_taxes)}")
-    st.write(f"Ausgaben: {format_currency(payed_taxes)}")
+    st.write(f"Zahlungen: {format_currency(payed_taxes)}")
+    st.write(f"Erstattungen: {format_currency(earned_taxes)}")
     st.write(f"Summe: {format_currency(payed_taxes - earned_taxes)}")
     with st.expander("Kapitalflussrechnung (nur Quellensteuer)"):
         display_dataframe(df_taxes.filter(["Report Date", "Activity Date", "Description", "Total"]),
