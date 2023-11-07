@@ -108,7 +108,7 @@ def read_csv_import_file(file: io.TextIOBase, filename: str, statement_dataframe
     Year: Year of report date (duplicated for convenience)
 
     :param file: Input file
-    :param filename: Input file name
+    :param filename: Input filename
     :param statement_dataframes: Target DataFrame for statement data
     :param forex_dataframes: Target DataFrame for forex data
     """
@@ -156,6 +156,84 @@ def read_csv_import_file(file: io.TextIOBase, filename: str, statement_dataframe
         # Skip all records which are not in base currency
         sof_df = sof_df.query("Currency == 'Base Currency Summary'").drop(columns=["Currency"])
 
+        statement_dataframes.append(sof_df)
+
+    except Exception:
+        raise DataError(filename)
+
+
+def read_csv_flex_query_file(file: io.TextIOBase, filename: str, statement_dataframes: list, forex_dataframes: list,
+                             rates_dataframes: list):
+    """
+    Reads and parses the input field and returns a dataframe with the following columns:
+
+    Report Date: Date of record
+    Activity Date: Date of activity
+    Description: Type of activity in human-readable text
+    Debit: Debit amount of activity (negative or none)
+    Credit: Credit amount of activity (positive or none)
+    Year: Year of report date (duplicated for convenience)
+
+    :param file: Input file
+    :param filename: Input filename
+    :param statement_dataframes: Target DataFrame for statement data
+    :param forex_dataframes: Target DataFrame for forex data
+    :param rates_dataframes: Target DataFrame for rates data
+    """
+
+    try:
+        # A CSV may contain the Forex P/L Detail and Statement of Funds report
+        forex_details_lines = []
+        statement_of_funds_lines = []
+        rate_lines = []
+
+        # Split csv different reports
+        for line in file:
+            line = line.replace('"','')
+            if line.startswith('HEADER') | line.startswith('DATA'):
+                section = line.split(",")[1]
+                match section:
+                    case 'FXTR':
+                        forex_details_lines.append(line)
+                    case 'STFU':
+                        statement_of_funds_lines.append(line)
+                    case 'RATE':
+                        rate_lines.append(line)
+
+        # prepare Rates DataFrame
+        fx_df = pd.read_csv(io.StringIO('\n'.join(rate_lines)),
+                            usecols=["Date/Time", "FromCurrency", "ToCurrency", "Rate"])
+        fx_df["Date/Time"] = pd.to_datetime(fx_df["Date/Time"]).dt.date
+
+        forex_dataframes.append(fx_df)
+
+        # prepare Forex DataFrame
+        fx_df = pd.read_csv(io.StringIO('\n'.join(forex_details_lines)),
+                            usecols=["FunctionalCurrency", "FXCurrency", "ActivityDescription", "DateTime", "Quantity",
+                                     "Proceeds", "Cost", "RealizedP/L", "Code"])
+        fx_df["DateTime"] = pd.to_datetime(fx_df["DateTime"], format='ISO8601')
+        fx_df["Date"] = pd.to_datetime(fx_df["DateTime"]).dt.date
+        fx_df.sort_values(by="DateTime")
+
+        forex_dataframes.append(fx_df)
+
+        sof_df = pd.read_csv(io.StringIO('\n'.join(statement_of_funds_lines)),
+                         usecols=["CurrencyPrimary", "FXRateToBase", "AssetClass", "SubCategory", "Symbol",
+                                  "Put/Call", "Date", "ActivityCode", "ActivityDescription", "TradeID", "Buy/Sell",
+                                  "TradeQuantity", "TradePrice", "TradeCommission", "TradeTax", "Debit", "Credit",
+                                  "Amount", "TradeCode", "Balance", "TransactionID"])
+        sof_df["Date"] = pd.to_datetime(sof_df["Date"]).dt.date
+        sof_df["Total"] = sof_df[["Debit", "Credit"]].sum(axis=1)
+
+        # Todo: Das Datum "Activity Date" auf Richtigkeit prüfen. Wichtig ist das Datum der Wertstellung
+        # sof_df["Report_Year"] = sof_df["ReportDate"].dt.year.astype("str")
+        # sof_df["Activity_Year"] = sof_df["Activity Date"].apply(lambda d: None if pd.isnull(d) else str(d.year))
+        sof_df["Report_Year"] = pd.to_datetime(sof_df["Date"]).dt.year.astype("str")
+        sof_df["Activity_Year"] = sof_df["Date"].apply(lambda d: None if pd.isnull(d) else str(d.year))
+        # Skip all records which are not in base currency
+        # sof_df = sof_df.query("Currency == 'Base Currency Summary'").drop(columns=["Currency"])
+
+        # Todo: Für chronologische Sortierung, nach 'TransactionID' aufsteigend sortieren.
         statement_dataframes.append(sof_df)
 
     except Exception:
@@ -492,9 +570,14 @@ def main():
     try:
         sof_dfs = []
         fx_dfs = []
+        rx_df = []
         sof_files = intro.file_uploader("Kapitalflussrechnung (CSV-Format)", type="csv", accept_multiple_files=True)
         for sof_file in sof_files:
-            read_csv_import_file(io.TextIOWrapper(sof_file, "utf-8"), sof_file.name, sof_dfs, fx_dfs)
+            read_csv_flex_query_file(io.TextIOWrapper(sof_file, "utf-8"), sof_file.name, sof_dfs, fx_dfs, rx_df)
+
+        # sof_files = intro.file_uploader("Kapitalflussrechnung (CSV-Format)", type="csv", accept_multiple_files=True)
+        # for sof_file in sof_files:
+        #     read_csv_import_file(io.TextIOWrapper(sof_file, "utf-8"), sof_file.name, sof_dfs, fx_dfs)
 
         if len(sof_files) == 0:
             return
