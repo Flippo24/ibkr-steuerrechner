@@ -4,6 +4,13 @@ import numpy as np
 import pandas as pd
 
 
+def decimal_from_value(value: str):
+    trimmed_value = value.strip()
+    if not trimmed_value:
+        return None
+    return Decimal(trimmed_value)
+
+
 def calc_profits_fifo(df: pd.DataFrame, count_column: str, debit_column: str, credit_column: str):
     """
     Calculates the profits of all shares trades using FIFO method in the given data frame.

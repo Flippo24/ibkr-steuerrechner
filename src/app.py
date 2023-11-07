@@ -3,13 +3,15 @@ import re
 from dataclasses import dataclass, asdict
 from decimal import Decimal
 from enum import Enum, auto
+from typing import Type, Dict, Any
 
 import pandas as pd
 import streamlit as st
+from pandas import DataFrame
 
 from i18n import format_date, format_currency, get_column_name
 from iterable_text_io import IterableTextIO
-from utils import calc_profits_fifo
+from utils import calc_profits_fifo, decimal_from_value
 
 RECORD_FUND_TRANSFER = re.compile(r"(Cash Transfer)|(Electronic Fund Transfer)|(Disbursement .*)")
 RECORD_DIVIDEND = re.compile(r"Cash Dividend|Payment in Lieu of Dividend")
@@ -94,7 +96,7 @@ class DataError(Exception):
     pass
 
 
-def read_statement_file(file: io.TextIOBase, filename: str) -> pd.DataFrame:
+def read_csv_import_file(file: io.TextIOBase, filename: str, statement_dataframes: list, forex_dataframes: list):
     """
     Reads and parses the input field and returns a dataframe with the following columns:
 
@@ -107,36 +109,57 @@ def read_statement_file(file: io.TextIOBase, filename: str) -> pd.DataFrame:
 
     :param file: Input file
     :param filename: Input file name
-    :return: Pandas Dataframe
+    :param statement_dataframes: Target DataFrame for statement data
+    :param forex_dataframes: Target DataFrame for forex data
     """
 
-    def decimal_from_value(value: str):
-        trimmed_value = value.strip()
-        if not trimmed_value:
-            return None
-        return Decimal(trimmed_value)
-
     try:
-        # Load relevant lines only
-        # A CSV may contain more than one report, but we are interested in Statement of Funds only
-        statement_of_funds_lines = (line for line in file if line.startswith("Statement of Funds,"))
-        with IterableTextIO(statement_of_funds_lines) as s:
-            # noinspection PyTypeChecker
-            df = pd.read_csv(s,
-                             usecols=["Currency", "Report Date" ,"Activity Date", "Description", "Debit", "Credit"],
-                             parse_dates=["Report Date", "Activity Date"],
-                             converters={"Debit": decimal_from_value, "Credit": decimal_from_value})
-        df["Total"] = df[["Debit", "Credit"]].sum(axis=1)
-        df["Report_Year"] = df["Report Date"].dt.year.astype("str")
-        df["Activity_Year"] = df["Activity Date"].apply(lambda d: None if pd.isnull(d) else str(d.year))
+        # A CSV may contain the Forex P/L Detail and Statement of Funds report
+        forex_details_lines = []
+        statement_of_funds_lines = []
 
+        #Split csv import
+        for line in file:
+            if line.startswith("Forex P/L Details,"):
+                forex_details_lines.append(line)
+            if line.startswith("Statement of Funds,"):
+                statement_of_funds_lines.append(line)
+
+        #prepare Forex DataFrame
+        # fx_df = pd.read_csv(io.StringIO('\n'.join(forex_details_lines)))
+        # fx_df = fx_df.drop(["Forex P/L Details", "Header", "Asset Category", "Basis in EUR", "Realized P/L in EUR", "Code"], axis=1)
+
+        fx_df = pd.read_csv(io.StringIO('\n'.join(forex_details_lines)),
+                             usecols=["Currency", "Description", "Date/Time", "FX Currency", "Quantity", "Proceeds in EUR"],
+                             parse_dates=["Date/Time"],
+                             converters={"Quantity": decimal_from_value, "Proceeds in EUR": decimal_from_value})
+        fx_df['Date/Time'] = fx_df['Date/Time'].str.replace(',', '')
+        #fx_df["Date/Time"] = pd.to_datetime(fx_df["Date/Time"])
+        fx_df[["Activity_Date", "Activity_Time"]] = fx_df["Date/Time"].apply(lambda x: pd.Series(str(x).split(" ")))
+        fx_df["Activity_Time"] = fx_df["Activity_Time"].apply(lambda d: '00:00:00' if pd.isnull(d) else str(d))
+        fx_df["Rate"] = fx_df["Quantity"] / fx_df["Proceeds in EUR"]
+        fx_df.sort_values(by=["Activity_Date", "Activity_Time"])
+
+        forex_dataframes.append(fx_df)
+
+        #prepare Statements DataFrame
+        # sof_df = pd.read_csv(io.StringIO('\n'.join(statement_of_funds_lines)))
+        # sof_df = sof_df.drop(["Statement of Funds", "Header", "Balance"], axis=1)
+
+        sof_df = pd.read_csv(io.StringIO('\n'.join(statement_of_funds_lines)),
+                         usecols=["Currency", "Report Date", "Activity Date", "Description", "Debit", "Credit"],
+                         parse_dates=["Report Date", "Activity Date"],
+                         converters={"Debit": decimal_from_value, "Credit": decimal_from_value})
+        sof_df["Total"] = sof_df[["Debit", "Credit"]].sum(axis=1)
+        sof_df["Report_Year"] = sof_df["Report Date"].dt.year.astype("str")
+        sof_df["Activity_Year"] = sof_df["Activity Date"].apply(lambda d: None if pd.isnull(d) else str(d.year))
         # Skip all records which are not in base currency
-        df = df.query("Currency == 'Base Currency Summary'").drop(columns=["Currency"])
+        sof_df = sof_df.query("Currency == 'Base Currency Summary'").drop(columns=["Currency"])
 
-        return df
+        statement_dataframes.append(sof_df)
+
     except Exception:
         raise DataError(filename)
-
 
 
 def display_dataframe(df: pd.DataFrame, date_columns: list[str], number_columns: list[str]):
@@ -467,11 +490,23 @@ def main():
     Hauptspeicher des Servers abgelegt, sie werden weder dauerhaft noch zeitweise gespeichert. Sobald Sie das 
     Browserfenster schließen, werden die Daten aus dem Speicher entfernt.""")
     try:
+        sof_dfs = []
+        fx_dfs = []
         sof_files = intro.file_uploader("Kapitalflussrechnung (CSV-Format)", type="csv", accept_multiple_files=True)
-        sof_dfs = [read_statement_file(io.TextIOWrapper(sof_file, "utf-8"), sof_file.name)
-                   for sof_file in sof_files]
-        if len(sof_dfs) == 0:
+        for sof_file in sof_files:
+            read_csv_import_file(io.TextIOWrapper(sof_file, "utf-8"), sof_file.name, sof_dfs, fx_dfs)
+
+        if len(sof_files) == 0:
             return
+
+        if len(sof_files) > 0 & len(sof_dfs) == []:
+            intro.info(f"In der Datei wurde keine Kaptitalflussrechnung gefunden. Prüfen Sie die einstellungen der Kontoauszugs.")
+            return
+
+        if len(sof_files) > 0 & len(fx_dfs) == []:
+            intro.info(f"In der Datei wurden keine Forex G/V Details gefunden. Prüfen Sie die einstellungen der Kontoauszugs.")
+            return
+
     except DataError as error:
         intro.error(f"In Datei {error} fehlt die Spalte 'Report Date'; bitte laden Sie den Kontoauszug in englischer Sprache herunter.")
         return
@@ -479,7 +514,11 @@ def main():
     intro.caption("Auswertung starten")
     intro.write("""Wählen Sie nun das Kalenderjahr aus, für das die Kontoauszüge ausgewertet werden sollen. Sie können
     beliebig oft zwischen den Kalenderjahren wechseln, ohne die Kontoauszügen neu hochladen zu müssen.""")
-    df = pd.concat(sof_dfs).sort_values(["Report Date"])
+    # Skip empty reports
+    sof_dfs = [sof_df for sof_df in sof_dfs if not sof_df.empty]
+    # Ensure chronological order of reports and keep order within each report as is
+    sof_dfs.sort(key=lambda sof_df: sof_df["Report Date"].iloc[0])
+    df = pd.concat(sof_dfs, ignore_index=True)
     years = df["Report_Year"].unique()
     years_options = ["Bitte wählen"] + list(years)[::-1]
     selected_year = intro.selectbox("Für welches Kalenderjahr sollen die Steuern berechnet werden?", years_options)
