@@ -82,6 +82,7 @@ class DividendType(Enum):
     ORDINARY = auto()
     OTHER = auto()
 
+
 def parse_dividend_record(record: pd.Series) -> str:
     description = record["Description"]
     if type(description) != str:
@@ -187,7 +188,7 @@ def read_csv_flex_query_file(file: io.TextIOBase, filename: str, statement_dataf
         statement_of_funds_lines = []
         rate_lines = []
 
-        # Split csv different reports
+        # Split csv in different reports
         for line in file:
             line = line.replace('"','')
             if line.startswith('HEADER') | line.startswith('DATA'):
@@ -201,37 +202,45 @@ def read_csv_flex_query_file(file: io.TextIOBase, filename: str, statement_dataf
                         rate_lines.append(line)
 
         # prepare Rates DataFrame
-        fx_df = pd.read_csv(io.StringIO('\n'.join(rate_lines)),
+        rx_df = pd.read_csv(io.StringIO('\n'.join(rate_lines)),
                             usecols=["Date/Time", "FromCurrency", "ToCurrency", "Rate"])
-        fx_df["Date/Time"] = pd.to_datetime(fx_df["Date/Time"]).dt.date
+        rx_df["Date/Time"] = pd.to_datetime(rx_df["Date/Time"]).dt.date
 
-        forex_dataframes.append(fx_df)
+        rates_dataframes.append(rx_df)
 
         # prepare Forex DataFrame
         fx_df = pd.read_csv(io.StringIO('\n'.join(forex_details_lines)),
-                            usecols=["FunctionalCurrency", "FXCurrency", "ActivityDescription", "DateTime", "Quantity",
-                                     "Proceeds", "Cost", "RealizedP/L", "Code"])
+                            usecols=["FunctionalCurrency", "FXCurrency", "ActivityDescription", "ReportDate",
+                                     "DateTime", "Quantity", "Proceeds", "Cost", "RealizedP/L", "Code"])
         fx_df["DateTime"] = pd.to_datetime(fx_df["DateTime"], format='ISO8601')
-        fx_df["Date"] = pd.to_datetime(fx_df["DateTime"]).dt.date
+        fx_df["Activity Date"] = pd.to_datetime(fx_df["DateTime"]).dt.date
         fx_df.sort_values(by="DateTime")
+        # Add FX Rates by Date
+        fx_df = pd.merge(left=fx_df, right=rx_df, how='left', left_on=['Activity Date', 'FXCurrency', 'FunctionalCurrency'],
+                 right_on=['Date/Time', 'FromCurrency', 'ToCurrency']).drop(['Date/Time'], axis=1)
+        fx_df.rename(columns={"ReportDate": "Report Date"})
 
         forex_dataframes.append(fx_df)
 
         sof_df = pd.read_csv(io.StringIO('\n'.join(statement_of_funds_lines)),
                          usecols=["CurrencyPrimary", "FXRateToBase", "AssetClass", "SubCategory", "Symbol",
-                                  "Put/Call", "Date", "ActivityCode", "ActivityDescription", "TradeID", "Buy/Sell",
+                                  "Put/Call", "ReportDate", "Date", "ActivityCode", "ActivityDescription", "TradeID", "Buy/Sell",
                                   "TradeQuantity", "TradePrice", "TradeCommission", "TradeTax", "Debit", "Credit",
                                   "Amount", "TradeCode", "Balance", "TransactionID"])
+        sof_df["ReportDate"] = pd.to_datetime(sof_df["ReportDate"]).dt.date
         sof_df["Date"] = pd.to_datetime(sof_df["Date"]).dt.date
+        sof_df["Report_Year"] = pd.to_datetime(sof_df["ReportDate"]).dt.year.astype("str")
         sof_df["Total"] = sof_df[["Debit", "Credit"]].sum(axis=1)
 
         # Todo: Das Datum "Activity Date" auf Richtigkeit prüfen. Wichtig ist das Datum der Wertstellung
-        # sof_df["Report_Year"] = sof_df["ReportDate"].dt.year.astype("str")
-        # sof_df["Activity_Year"] = sof_df["Activity Date"].apply(lambda d: None if pd.isnull(d) else str(d.year))
-        sof_df["Report_Year"] = pd.to_datetime(sof_df["Date"]).dt.year.astype("str")
         sof_df["Activity_Year"] = sof_df["Date"].apply(lambda d: None if pd.isnull(d) else str(d.year))
-        # Skip all records which are not in base currency
-        # sof_df = sof_df.query("Currency == 'Base Currency Summary'").drop(columns=["Currency"])
+
+        # Add FX Rates by Date
+        sof_df = pd.merge(left=sof_df, right=rx_df, how='left', left_on=['Date', 'CurrencyPrimary'],
+                         right_on=['Date/Time', 'FromCurrency']).drop(['Date/Time'], axis=1)
+
+        sof_df.rename(columns={"ReportDate": "Report Date", "Date": "Activity Date",
+                               "ActivityDescription": "Description"}, inplace=True)
 
         # Todo: Für chronologische Sortierung, nach 'TransactionID' aufsteigend sortieren.
         statement_dataframes.append(sof_df)
